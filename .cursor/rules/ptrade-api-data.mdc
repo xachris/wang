@@ -1,0 +1,170 @@
+---
+description: PTRADE行情数据与信息查询API函数参考
+globs: ["*.py", "strategies/**", "strategy/**"]
+alwaysApply: false
+---
+
+# PTRADE 数据查询 API 函数参考
+
+## 历史行情数据
+
+### get_history(count, frequency, field, security_list, fq, include, fill, is_dict)
+获取最近 N 条历史 K 线数据，支持多股票、多字段。
+
+**参数：**
+- `count` (int, 必填): K 线数量，大于 0
+- `frequency` (str, 选填, 默认 '1d'): K 线周期
+  - 分钟级：`'1m'`, `'5m'`, `'15m'`, `'30m'`, `'60m'`, `'120m'`
+  - 日级及以上：`'1d'`, `'1w'`/`'weekly'`, `'mo'`/`'monthly'`, `'1q'`/`'quarter'`, `'1y'`/`'yearly'`
+- `field` (str/list, 选填, 默认 ['open','high','low','close','volume','money','price']):
+  可查询字段：`open`, `high`, `low`, `close`, `volume`, `money`, `price`, `preclose`, `high_limit`, `low_limit`, `unlimited`
+- `security_list` (list/str, 选填): 股票列表，None 表示获取 universe 中所有股票
+- `fq` (str, 选填, 默认 None): 复权选项
+  - `'pre'`: 前复权
+  - `'post'`: 后复权
+  - `'dypre'`: 动态前复权
+  - `None`: 不复权
+- `include` (bool, 选填, 默认 False): 是否包含当前周期数据
+- `fill` (str, 选填, 默认 'nan'): 数据填充方式
+  - `'pre'`: 用上一分钟数据填充
+  - `'nan'`: 填充 NaN
+- `is_dict` (bool, 选填, 默认 False): True 返回 dict，False 返回 DataFrame
+
+**返回值：**
+- 单支股票：pandas.DataFrame
+- 多支股票 + 单字段：DataFrame
+- 多支股票 + 多字段：Panel 对象（或 DataFrame，取决于版本）
+
+```python
+# 获取近10日收盘价
+df = get_history(10, '1d', 'close', '688001.SS', fq=None, include=True)
+
+# 获取近60根5分钟K线
+df = get_history(60, '5m', ['open', 'high', 'low', 'close', 'volume'], ['600519.SS'])
+
+# 获取universe中所有股票近20日收盘价（前复权）
+df = get_history(20, '1d', 'close', fq='pre')
+```
+
+### get_price(security, count, frequency, fields, fq)
+获取历史价格数据（与 get_history 类似，部分版本可用）。
+
+---
+
+## 实时行情数据
+
+### get_snapshot(security_list)
+获取行情快照，返回实时行情数据字典。
+
+**参数：** `security_list` (list[str]/str): 股票代码
+
+**返回字段：**
+- `last_px`: 最新价格
+- `open_px`: 开盘价
+- `high_px`: 最高价
+- `low_px`: 最低价
+- `business_amount`: 成交量
+- `askprice`: 卖价（委托卖出价）
+- `bidprice`: 买价（委托买入价）
+
+**注意：**
+- 集合竞价期间(9:15-9:25)，`last_px` 返回虚拟撮合价格
+- 在 `before_trading_start`(9:00-9:15)中调用时，大部分数据可能为 0
+
+```python
+snapshot = get_snapshot('600519.SS')
+current_price = snapshot['600519.SS']['last_px']
+```
+
+### get_gear_price(sids)
+获取指定代码的档位行情价格（盘口数据）。
+
+**参数：** `sids` (list[str]/str): 股票代码
+
+**返回值：** `dict[str:dict]`
+- `bid_grp`: 委买档位 {1~5档: [价格, 委托量, 委托笔数]}
+- `offer_grp`: 委卖档位 {1~5档: [价格, 委托量, 委托笔数]}
+
+**注意：**
+- 获取失败时返回空 dict
+- 无 L2 行情时委托笔数为 0
+- 仅在交易模块可用
+
+```python
+gear = get_gear_price('600519.SS')
+bid1_price = gear['600519.SS']['bid_grp'][1][0]  # 买一价
+```
+
+### get_trend_data(date=None, stocks=None, market=None)
+获取集合竞价期间数据。
+
+**参数：**
+- `date` (str, 选填): 日期，格式 'YYYYmmdd'，默认当前日期
+- `stocks` (str/list, 选填): 股票代码
+- `market` (str, 选填): 市场代码（如 'XSHG', 'XSHE'），与 stocks 不能同时使用
+
+**返回字段：**
+- `time_stamp`: 时间戳
+- `hq_px`: 撮合价格（当前匹配价）
+- `business_amount`: 成交量（当前匹配量）
+- `business_balance`: 成交额
+
+**使用场景：** 获取 9:15-9:25 集合竞价期间的撮合价格和成交量数据。
+9:25 后调用返回开盘价和最终成交量。
+
+---
+
+## 财务数据
+
+### get_fundamentals(security, table, fields=None, date=None, start_year=None, end_year=None, report_types=None, merge_type=None)
+获取财务报表数据和估值数据。
+
+**参数：**
+- `security` (str/list): 股票代码
+- `table` (str): 数据表名
+  - `'valuation'`: 估值数据（日频）
+  - `'balance_statement'`: 资产负债表
+  - `'income_statement'`: 利润表
+  - `'cashflow_statement'`: 现金流量表
+  - `'growth_ability'`: 成长能力指标
+  - `'profit_ability'`: 盈利能力指标
+  - `'eps'`: 每股指标
+  - `'operating_ability'`: 营运能力指标
+  - `'debt_paying_ability'`: 偿债能力指标
+- `fields` (list, 选填): 所需输出的字段
+- `date` (str, 选填): 查询日期，格式 'YYYYmmdd'
+- `start_year`/`end_year` (int, 选填): 按年份范围查询
+
+**返回值：** DataFrame
+
+**使用限制：** 每秒不超过 100 次调用，单次最大 500 条数据。
+
+```python
+df = get_fundamentals('600519.SS', 'valuation', fields=['pe_ratio', 'pb_ratio'], date='20240101')
+```
+
+---
+
+## 股票信息查询
+
+### get_Ashares(date=None)
+获取指定日期 A 股代码列表。不指定日期则获取当天全部 A 股。
+包含沪深主板、创业板、科创板，不包含北交所和新三板（不含 4 和 8 开头代码）。
+
+### get_all_securities()
+获取所有证券信息。
+
+### get_security_info(security)
+获取指定证券的基础信息。
+
+### get_stock_info(security)
+获取股票基础信息（名称、状态、板块等）。
+
+### get_trading_day()
+获取交易日信息/交易日历。
+
+### get_index_stocks(index_code)
+获取指数成分股列表。
+
+### get_industry_stocks(industry_code)
+获取行业成分股列表。

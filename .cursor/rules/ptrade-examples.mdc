@@ -1,0 +1,199 @@
+---
+description: PTRADE量化策略示例代码模板
+globs: ["*.py", "strategies/**", "strategy/**"]
+alwaysApply: false
+---
+
+# PTRADE 策略示例代码
+
+## 示例一：双均线策略（入门模板）
+
+```python
+def initialize(context):
+    set_benchmark("000300.SS")
+    set_commission(commission_ratio=0.0003, min_commission=5.0, type="STOCK")
+    set_slippage(slippage=0.0024)
+
+    g.security_list = ["600519.SS", "000001.SZ"]
+    set_universe(g.security_list)
+
+    g.short_ma_period = 10
+    g.long_ma_period = 30
+    g.traded_today = False
+
+    log.info("策略初始化完成。")
+
+
+def before_trading_start(context, data):
+    g.traded_today = False
+    g.today_options = list(g.security_list)
+
+    hist = get_history(1, frequency="1d", field="close",
+                       security_list=g.security_list, fq=None, include=False)
+    log.info(f"今日备选股票池: {g.today_options}")
+
+
+def handle_data(context, data):
+    for security in g.security_list:
+        hist = get_history(g.long_ma_period + 5, frequency="1d",
+                          field="close", security_list=[security])
+        close_prices = hist[security]
+
+        short_ma = close_prices[-g.short_ma_period:].mean()
+        long_ma = close_prices[-g.long_ma_period:].mean()
+
+        prev_short = close_prices[-(g.short_ma_period+1):-1].mean()
+        prev_long = close_prices[-(g.long_ma_period+1):-1].mean()
+
+        position = context.portfolio.positions.get(security)
+        current_amount = position.amount if position else 0
+
+        if current_amount == 0:
+            if short_ma > long_ma and prev_short <= prev_long:
+                if context.portfolio.cash > 10000:
+                    order_target_value(security, context.portfolio.cash * 0.45)
+                    log.info(f"金叉买入 {security}")
+        else:
+            if short_ma < long_ma and prev_short >= prev_long:
+                order_target(security, 0)
+                log.info(f"死叉卖出 {security}")
+
+
+def after_trading_end(context, data):
+    for security, pos in context.portfolio.positions.items():
+        if pos.amount > 0:
+            pnl = (pos.last_sale_price - pos.cost_basis) * pos.amount
+            log.info(f"持仓 {security}: {pos.amount}股, 盈亏={pnl:.2f}")
+    log.info(f"当日总资产: {context.portfolio.portfolio_value:.2f}")
+```
+
+---
+
+## 示例二：MACD 策略
+
+```python
+def initialize(context):
+    set_benchmark("000300.SS")
+    set_commission(commission_ratio=0.0003, min_commission=5.0, type="STOCK")
+
+    g.security_list = ["600519.SS"]
+    set_universe(g.security_list)
+    log.info("MACD策略初始化完成")
+
+
+def get_MACD(close_data, short=12, long=26, mid=9):
+    """计算MACD指标"""
+    import numpy as np
+    short_ema = close_data.ewm(span=short, adjust=False).mean()
+    long_ema = close_data.ewm(span=long, adjust=False).mean()
+    DIF = short_ema - long_ema
+    DEA = DIF.ewm(span=mid, adjust=False).mean()
+    MACD = 2 * (DIF - DEA)
+    return DIF, DEA, MACD
+
+
+def handle_data(context, data):
+    for security in g.security_list:
+        hist = get_history(60, frequency="1d", field="close",
+                          security_list=[security], fq='pre')
+        import pandas as pd
+        close_data = pd.Series(hist[security].values.flatten())
+
+        DIF, DEA, MACD = get_MACD(close_data)
+
+        dif_now = DIF.iloc[-1]
+        dea_now = DEA.iloc[-1]
+        macd_now = MACD.iloc[-1]
+        macd_prev = MACD.iloc[-2]
+
+        position = context.portfolio.positions.get(security)
+        current_amount = position.amount if position else 0
+
+        if current_amount == 0:
+            if dif_now > 0 and dea_now > 0 and macd_prev < 0 and macd_now >= 0:
+                order_target_value(security, context.portfolio.cash * 0.9)
+                log.info(f"MACD金叉，买入 {security}")
+        else:
+            if dif_now < 0 and dea_now < 0 and macd_prev >= 0 and macd_now < 0:
+                order_target(security, 0)
+                log.info(f"MACD死叉，卖出 {security}")
+```
+
+---
+
+## 示例三：定时任务策略
+
+```python
+def initialize(context):
+    set_benchmark("000300.SS")
+    g.security = '600519.SS'
+    set_universe([g.security])
+
+    run_daily(context, morning_check, '09:31')
+    run_daily(context, afternoon_close, '14:50')
+
+
+def morning_check(context):
+    snapshot = get_snapshot(g.security)
+    open_price = snapshot[g.security]['open_px']
+    log.info(f"开盘价: {open_price}")
+
+    hist = get_history(5, '1d', 'close', [g.security], include=False)
+    avg_5 = hist[g.security].mean()
+
+    if open_price > avg_5:
+        position = context.portfolio.positions.get(g.security)
+        if not position or position.amount == 0:
+            order_value(g.security, context.portfolio.cash * 0.8)
+            log.info("开盘价高于5日均线，买入")
+
+
+def afternoon_close(context):
+    position = context.portfolio.positions.get(g.security)
+    if position and position.amount > 0:
+        profit_rate = (position.last_sale_price - position.cost_basis) / position.cost_basis
+        if profit_rate > 0.03 or profit_rate < -0.02:
+            order_target(g.security, 0)
+            log.info(f"止盈止损平仓，收益率: {profit_rate:.2%}")
+
+
+def handle_data(context, data):
+    pass
+```
+
+---
+
+## 示例四：集合竞价策略
+
+```python
+def initialize(context):
+    g.security_list = ['600519.SS', '000858.SZ']
+    set_universe(g.security_list)
+    run_daily(context, auction_check, '09:25')
+
+
+def auction_check(context):
+    import time
+    for security in g.security_list:
+        trend = get_trend_data(stocks=security)
+        if trend:
+            auction_price = trend[-1]['hq_px']
+            auction_vol = trend[-1]['business_amount']
+            log.info(f"{security} 集合竞价: 价格={auction_price}, 量={auction_vol}")
+
+
+def handle_data(context, data):
+    pass
+```
+
+---
+
+## 策略编写最佳实践
+
+1. **初始化集中管理**: 所有参数、股票池、佣金设置统一放在 `initialize` 中
+2. **全局变量用 g**: 不使用 Python 全局变量，用 `g.xxx` 存储跨函数状态
+3. **持仓检查**: 下单前务必检查 `context.portfolio.cash` 和当前持仓
+4. **异常处理**: 行情数据可能为空或 NaN，需做防御性检查
+5. **日志记录**: 关键操作（下单、信号触发）用 `log.info` 记录
+6. **价格精度**: 股票限价保留 2 位小数，ETF/可转债保留 3 位小数
+7. **回测与实盘兼容**: 可用 `is_trade()` 区分回测和实盘环境

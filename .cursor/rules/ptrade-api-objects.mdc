@@ -1,0 +1,170 @@
+---
+description: PTRADE核心对象（Context、Portfolio、Position、Order）属性参考
+globs: ["*.py", "strategies/**", "strategy/**"]
+alwaysApply: false
+---
+
+# PTRADE 核心对象参考
+
+## Context 对象
+
+`context` 是策略的上下文对象，贯穿所有生命周期函数。
+
+### 主要属性
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `context.portfolio` | Portfolio | 投资组合对象，包含账户状态信息 |
+| `context.subportfolios` | list | 子投资组合列表（多账户场景） |
+| `context.current_dt` | datetime | 当前策略执行的日期时间 |
+
+```python
+def handle_data(context, data):
+    today = context.current_dt
+    cash = context.portfolio.cash
+    total = context.portfolio.portfolio_value
+```
+
+---
+
+## Portfolio 对象
+
+`context.portfolio` 包含投资组合/账户的核心信息。
+
+### 主要属性
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `portfolio_value` | float | 总资产/账户净值 |
+| `cash` | float | 可用现金余额 |
+| `positions` | dict | 持仓字典，key 为股票代码，value 为 Position 对象 |
+| `returns` | float | 累计收益率 |
+
+```python
+def handle_data(context, data):
+    portfolio = context.portfolio
+
+    log.info(f"总资产: {portfolio.portfolio_value}")
+    log.info(f"可用资金: {portfolio.cash}")
+    log.info(f"累计收益: {portfolio.returns}")
+
+    # 遍历所有持仓
+    for security, pos in portfolio.positions.items():
+        log.info(f"{security}: 持仓{pos.amount}股, 市值{pos.market_value}")
+```
+
+---
+
+## Position 对象
+
+`Position` 表示单个股票的持仓信息。通过 `context.portfolio.positions[security]` 或 `get_position(security)` 获取。
+
+### 主要属性
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `amount` | int | 持仓数量（股数） |
+| `cost_basis` | float | 持仓成本价 |
+| `last_sale_price` | float | 最后成交价格/最新价 |
+| `market_value` | float | 持仓市值 |
+| `avg_cost` | float | 平均成本 |
+| `security` | str | 股票代码 |
+| `side` | str | 持仓方向 |
+
+```python
+def handle_data(context, data):
+    security = '600519.SS'
+    pos = context.portfolio.positions.get(security)
+
+    if pos and pos.amount > 0:
+        profit_rate = (pos.last_sale_price - pos.cost_basis) / pos.cost_basis
+        log.info(f"{security} 持仓{pos.amount}股, 盈亏比例: {profit_rate:.2%}")
+    else:
+        log.info(f"{security} 无持仓")
+```
+
+---
+
+## Order 对象
+
+`Order` 表示一个买卖订单。通过 `get_order(order_id)`、`get_orders()` 等函数获取。
+
+### 主要属性
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `id` | str | 订单号 |
+| `dt` | datetime | 订单产生时间 |
+| `status` | str | 订单状态 |
+| `security`/`symbol` | str | 标的代码 |
+| `amount` | int | 下单数量（买入正，卖出负） |
+| `filled` | int | 已成交数量（买入正，卖出负） |
+| `limit` | float | 指定的限价价格 |
+| `created` | datetime | 订单生成时间 |
+| `entrust_no` | str | 委托编号 |
+| `priceGear` | - | 盘口档位 |
+
+### 订单状态值
+
+| 状态值 | 含义 |
+|--------|------|
+| 0 | 未报 |
+| 1 | 待报 |
+| 2 | 已报 |
+| 8 | 已成 |
+
+```python
+def handle_data(context, data):
+    oid = order('600519.SS', 100)
+    if oid:
+        log.info(f"下单成功, 订单号: {oid}")
+
+    # 查询所有订单
+    orders = get_orders()
+    for o in orders:
+        log.info(f"订单 {o.id}: 状态={o.status}, 委托={o.amount}, 成交={o.filled}")
+```
+
+---
+
+## data 对象
+
+`handle_data(context, data)` 中的 `data` 参数提供当前行情数据。
+
+```python
+def handle_data(context, data):
+    security = '600519.SS'
+    current_price = data[security].price  # 当前价格
+```
+
+**注意：** 在 `after_trading_end` 中 data 通常为空，获取价格应使用 `pos.last_sale_price` 或 `get_price()`。
+
+---
+
+## 常用代码模式
+
+### 检查持仓并下单
+```python
+def handle_data(context, data):
+    security = g.security
+    position = context.portfolio.positions.get(security)
+    current_amount = position.amount if position else 0
+
+    if current_amount == 0:
+        # 无持仓，考虑买入
+        if context.portfolio.cash > 10000:
+            order_value(security, context.portfolio.cash * 0.9)
+    else:
+        # 有持仓，考虑卖出
+        if some_sell_condition:
+            order_target(security, 0)
+```
+
+### 遍历持仓计算盈亏
+```python
+def after_trading_end(context, data):
+    for security, pos in context.portfolio.positions.items():
+        if pos.amount > 0:
+            pnl = (pos.last_sale_price - pos.cost_basis) * pos.amount
+            log.info(f"{security}: 盈亏={pnl:.2f}")
+```

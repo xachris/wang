@@ -1,0 +1,115 @@
+---
+description: PTRADE量化交易策略编写通用规则与框架
+globs: ["*.py", "strategies/**", "strategy/**"]
+alwaysApply: false
+---
+
+# PTRADE 量化交易平台 — 通用规则
+
+PTRADE 是恒生电子开发的量化交易平台，基于 Python。新版本基于 Python 3.11，旧版本为 Python 3.5.1。
+官方 API 文档：https://ptradeapi.com/
+
+## 策略框架结构
+
+每个 PTRADE 策略由以下函数组成（按执行顺序）：
+
+```python
+def initialize(context):
+    """【必选】策略启动时仅运行一次，用于初始化配置"""
+    pass
+
+def before_trading_start(context, data):
+    """【可选】每个交易日开盘前执行（回测8:30，实盘9:10）"""
+    pass
+
+def handle_data(context, data):
+    """【必选】盘中按周期执行的核心交易逻辑
+    - 日级策略：回测在15:00执行，实盘按券商配置
+    - 分钟级策略：回测9:31-15:00，实盘9:30-14:59
+    """
+    pass
+
+def after_trading_end(context, data):
+    """【可选】每个交易日收盘后执行（15:30）
+    注意：此函数中 data 通常为空
+    """
+    pass
+```
+
+## 三大运行模块
+
+| 模块 | 用途 | 特点 |
+|------|------|------|
+| **研究环境** | 数据清洗、建模、绘图、调试 | 不支持 order 下单、账户资产等交易函数 |
+| **回测环境** | 策略搭建、参数调优、历史收益评估 | 支持完整交易逻辑，用历史数据验证 |
+| **交易模块** | 实盘/模拟交易执行 | 支持 tick 数据和市价单，可离线运行 |
+
+不同模块可调用的函数不同，编写策略时需注意区分。
+
+## 全局变量 `g`
+
+`g` 是全局变量对象，用于跨函数、跨交易日传递数据：
+
+```python
+def initialize(context):
+    g.security = '600570.SS'
+    g.short_period = 5
+    g.long_period = 20
+    g.traded_today = False
+
+def handle_data(context, data):
+    log.info(g.security)  # 可以访问 initialize 中设置的变量
+```
+
+## 日志记录 `log`
+
+仅在回测和交易模块可用（研究模块不可用）：
+
+```python
+log.debug("调试信息")
+log.info("普通信息")
+log.warning("警告信息")
+log.error("错误信息")
+log.critical("严重错误")
+```
+
+## 股票代码格式
+
+- 上证（上海）：`600XXX.SS` 或 `600XXX.XSHG`
+- 深证（深圳）：`000XXX.SZ` 或 `000XXX.XSHE`
+- 创业板：`300XXX.SZ`
+- 科创板：`688XXX.SS`
+
+## 定时任务 `run_daily`
+
+在 `initialize` 中调用，设置每日定时执行的函数：
+
+```python
+def initialize(context):
+    run_daily(context, my_func, '09:31')
+    run_daily(context, my_func2, '14:50')
+
+def my_func(context):
+    log.info("09:31 执行的任务")
+```
+
+注意：日线回测中 `run_daily` 的时间统一在 15:00 执行。
+
+## 编写规范
+
+1. `initialize` 中完成所有初始化：股票池、基准、佣金、滑点等
+2. `handle_data` 中编写核心交易逻辑：获取数据 → 计算信号 → 检查持仓 → 执行下单
+3. 使用 `g` 对象存储全局状态，不要使用 Python 全局变量
+4. 价格精度：股票为 2 位小数，ETF/国债为 3 位小数
+5. `before_trading_start` 中若需行情数据，实盘需等待到 9:15 后（可用 `time.sleep`）
+6. 可通过 `is_trade()` 判断当前是回测还是实盘，实现代码兼容
+
+## 支持的交易品种
+
+- 普通股票（A股）
+- ETF 基金和 LOF 基金
+- 可转债
+- 期货（投机类型）
+- 融资融券
+- 国债逆回购
+- 期权
