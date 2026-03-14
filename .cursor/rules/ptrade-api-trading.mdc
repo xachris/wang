@@ -1,0 +1,199 @@
+---
+description: PTRADE交易类API函数参考
+globs: ["*.py", "strategies/**", "strategy/**"]
+alwaysApply: false
+---
+
+# PTRADE 交易类 API 函数参考
+
+## 初始化设置函数（在 initialize 中调用）
+
+### set_universe(security_list)
+设置策略关注的股票池。影响 `get_history` 的默认参数。
+```python
+set_universe(['600519.SS', '000001.SZ', '300750.SZ'])
+```
+
+### set_benchmark(sids)
+设置策略基准，用于计算 Alpha、Beta 等指标。默认为沪深300（000300.SS）。
+```python
+set_benchmark('000300.SS')
+```
+
+### set_commission(commission_ratio, min_commission, type)
+设置佣金费率（仅回测有效）。
+- `commission_ratio`: 佣金费率，默认万分之三（0.0003）
+- `min_commission`: 最低佣金，默认 5 元
+- `type`: 交易类型，如 `"STOCK"`, `"ETF"`, `"LOF"`
+```python
+set_commission(commission_ratio=0.0003, min_commission=5.0, type="STOCK")
+```
+手续费 = max(金额 × 费率, 最低佣金) + 经手费(万0.487)
+
+### set_slippage(slippage)
+设置滑点，模拟真实市场价格冲击。支持固定金额或比例两种方式。
+建议值：低价股 0.01-0.03 元；高价股 0.1%-0.3%
+```python
+set_slippage(slippage=0.0024)
+```
+
+### set_order_cost()
+综合配置交易成本相关参数。
+
+---
+
+## 股票交易函数
+
+### order(security, amount, style=None, limit_price=None, market_type=None)
+按数量下单。
+- `security` (str): 股票代码，如 `'600570.SS'`
+- `amount` (int): 交易数量，正数买入，负数卖出
+- `limit_price` (float, 可选): 限价价格，不传则使用最新价
+- `market_type` (可选): 市场类型
+- **返回值**: 成功返回 order_id (str)，失败返回 None
+```python
+order('600519.SS', 100)                    # 市价买入100股
+order('600519.SS', -100)                   # 市价卖出100股
+order('600519.SS', 100, limit_price=1800)  # 限价1800买入100股
+```
+
+### order_target(security, amount, style=None, limit_price=None)
+调整持仓到目标数量。当前持仓少于目标则买入，多于则卖出。
+```python
+order_target('600519.SS', 500)  # 调整到持有500股
+order_target('600519.SS', 0)    # 清仓
+```
+
+### order_value(security, value, style=None, limit_price=None)
+按金额下单。通过 金额/限价 或 金额/最新价 转换为交易数量。
+```python
+order_value('600519.SS', 50000)  # 买入约5万元的股票
+```
+
+### order_target_value(security, value, style=None, limit_price=None)
+调整持仓到目标市值。比较当前持仓金额与目标金额的差额进行交易。
+```python
+order_target_value('600519.SS', 100000)  # 调整持仓市值到10万
+```
+
+### order_market(security, amount, market_type)
+按市价委托。卖单会校验持仓最大可卖数量后调整再报柜台。
+```python
+order_market('600519.SS', 100, market_type='market')
+```
+
+### cancel_order(order_id)
+撤销指定订单。
+```python
+cancel_order('order_id_123')
+```
+
+### cancel_order_ex(order_id)
+撤销指定订单（扩展版）。
+
+---
+
+## 订单查询函数
+
+### get_order(order_id)
+获取指定订单的 Order 对象。
+
+### get_orders()
+获取当日全部订单列表。
+
+### get_open_orders()
+获取当日未完成的订单列表。
+
+### get_all_orders()
+获取账户当日全部订单。
+
+### get_trades()
+获取当日已成交的订单。
+
+---
+
+## 持仓查询函数
+
+### get_position(security)
+获取指定股票的持仓 Position 对象。
+
+### get_positions()
+获取所有持仓的 Position 对象列表。
+
+---
+
+## 下单流程说明
+
+1. 判断是否为隔夜单和交易时间（交易时间范围 9:10~15:00，系统可配）
+2. 交易时间内的订单立即加入未处理订单队列
+3. 非交易时间的订单先放入队列，等到交易时间后才移入
+4. 未处理订单进行限价判断：未传入限价则按最新价处理，然后报柜台
+
+---
+
+## 期货交易函数
+
+### buy_open(security, amount, limit_price=None)
+期货开多（建立多头头寸）。
+
+### sell_close(security, amount, limit_price=None)
+期货多平（平掉多头头寸）。
+
+### sell_open(security, amount, limit_price=None)
+期货空开（建立空头头寸）。
+
+### buy_close(security, amount, limit_price=None)
+期货空平（平掉空头头寸）。
+
+---
+
+## 融资融券函数
+
+### margincash_open(security, amount)
+融资买入。
+
+### margincash_close(security, amount)
+卖券还款。
+
+### margincash_direct_refund(security, amount)
+直接还款。
+
+### marginsec_open(security, amount)
+融券卖出。
+
+### marginsec_close(security, amount)
+买券还券。
+
+### marginsec_direct_refund(security, amount)
+直接还券。
+
+### get_margincash_stocks()
+查询可融资股票列表。
+
+### get_marginsec_stocks()
+查询可融券股票列表。
+
+### get_margin_assert()
+查询融资融券资产信息。
+
+---
+
+## 其他交易函数
+
+### order_tick(security, amount)
+tick 行情触发买卖。
+
+### ipo_stocks_order()
+新股一键申购。
+
+### after_trading_order(security, amount, limit_price)
+盘后固定价委托。
+
+### debt_to_stock_order(security, amount)
+可转债转股。
+
+### etf_purchase_redemption()
+ETF 申赎。
+
+### etf_basket_order()
+ETF 成分券篮子下单。
